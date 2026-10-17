@@ -1,249 +1,314 @@
-# Lab: Flask-SQLAlchemy Serialization
 
-## Scenario
+# Flask-SQLAlchemy Serialization Lab
 
-You are building a simplified e-commerce backend that manages customers, 
-the items they purchase, and the reviews they leave for products. To ensure 
-your database is well-structured and your application can easily communicate 
-with front-end or external systems, you need to correctly model the 
-relationships between customers, items, and reviews, and then serialize this 
-data into dictionaries or JSON-friendly formats.
+## Project Overview
 
-To support this, you will need to use:
-* SQLAlchemy models to define relationships and association proxies.
-* Marshmallow schemas to serialize and structure the nested relational data.
-* Recursion handling techniques to prevent infinite loops when serializing 
-  relationships.
+This project demonstrates how to create relational database models using Flask-SQLAlchemy and serialize those models using Marshmallow.
 
-By the end of this lab, you should have a fully relational database and be 
-able to serialize complex, nested relationships between customers, items, 
-and reviews without errors.
+The application models a simple e-commerce system consisting of customers, items, and reviews. It uses SQLAlchemy relationships to connect records, an association proxy to access related items, and Marshmallow schemas to convert model instances into dictionaries.
 
-## Tools & Resources
+The project also demonstrates how to prevent circular references when serializing nested relationships.
 
-- [GitHub Repo](https://github.com/learn-co-curriculum/flask-sqlalchemy-serialization-lab)
-- [Marshmallow Documentation](https://marshmallow.readthedocs.io/en/stable/)
+## Learning Objectives
 
-## Setup
+- Create database models using Flask-SQLAlchemy.
+- Establish one-to-many and many-to-one relationships.
+- Configure bidirectional relationships using `back_populates`.
+- Implement an association proxy to access related objects.
+- Define Marshmallow schemas for model serialization.
+- Serialize nested relationships while preventing recursion.
+- Manage database migrations using Flask-Migrate and Alembic.
+- Verify functionality using pytest.
 
-Fork and clone the lab repo.
+## Technologies Used
 
-Run `pipenv install` and `pipenv shell` .
+- Python
+- Flask
+- Flask-SQLAlchemy
+- SQLAlchemy
+- Marshmallow
+- Flask-Migrate
+- Alembic
+- SQLite
+- Pytest
 
-```console
-$ pipenv install
-$ pipenv shell
+## Project Structure
+
+The primary application files are located in the `server` directory.
+
+```text
+server/
+├── app.py
+├── models.py
+├── seed.py
+├── instance/
+│   └── app.db
+├── migrations/
+│   └── versions/
+└── testing/
+    ├── conftest.py
+    ├── review_test.py
+    ├── association_proxy_test.py
+    └── serialization_test.py
 ```
 
-Change into the `server` directory:
+**Note:** The SQLite database is generated locally and may be excluded from version control.
 
-```console
-$ cd server
+## Database Models
+
+The application contains three SQLAlchemy models.
+
+### Customer
+
+The `Customer` model represents a customer who can write reviews for items.
+
+**Attributes:**
+- `id`: Unique customer identifier.
+- `name`: Customer's name.
+- `reviews`: One-to-many relationship with `Review`.
+- `items`: Association proxy providing access to reviewed items.
+
+### Item
+
+The `Item` model represents an item available in the database.
+
+**Attributes:**
+- `id`: Unique item identifier.
+- `name`: Item name.
+- `price`: Item price.
+- `reviews`: One-to-many relationship with `Review`.
+
+### Review
+
+The `Review` model connects customers and items while storing review information.
+
+**Attributes:**
+- `id`: Unique review identifier.
+- `comment`: Review text.
+- `customer_id`: Foreign key referencing `customers.id`.
+- `item_id`: Foreign key referencing `items.id`.
+- `customer`: Relationship with the associated customer.
+- `item`: Relationship with the associated item.
+
+## Database Relationships
+
+The application uses bidirectional SQLAlchemy relationships configured with `back_populates`.
+
+### Customer and Review
+
+A customer can have multiple reviews, but each review belongs to one customer.
+
+```python
+# Customer model
+reviews = db.relationship('Review', back_populates="customer")
+
+# Review model
+customer = db.relationship('Customer', back_populates='reviews')
 ```
 
-The file `server/models.py` defines models named `Customer` and `Item`.
+### Item and Review
 
-Run the following commands to create the tables for customers and items.
+An item can have multiple reviews, but each review belongs to one item.
 
-```console
-$ flask db init
-$ flask db migrate -m "initial migration"
-$ flask db upgrade head
+```python
+# Item model
+reviews = db.relationship('Review', back_populates="item")
+
+# Review model
+item = db.relationship('Item', back_populates='reviews')
 ```
 
-## Instructions
+Together, these relationships allow customers and items to be associated through the `Review` model.
 
-### Task 1: Define the Problem
+## Association Proxy
 
-Your application currently models customers and items, but there’s 
-no direct way to track reviews that customers leave for the items 
-they purchase. You also cannot yet serialize your data easily to 
-share it via an API.
+The `Customer` model uses SQLAlchemy's `association_proxy` to access reviewed items directly through the reviews relationship.
 
-Specifically, you need to:
-* Create a `Review` model to connect customers and items through their reviews.
-* Allow a customer to access their reviewed items through an association proxy.
-* Serialize models properly using Marshmallow to:
-  * Flatten nested relationships.
-  * Avoid recursion errors.
-  * Control which fields are included or excluded during serialization.
-
-Without solving these problems, it would be difficult to represent customer 
-purchase histories, reviews, and item popularity in a structured, API-ready 
-way.
-
-### Task 2: Determine the Design
-
-To solve this, the design will follow these steps:
-
-1. Database Model Updates:
-  * Create a `Review` model as a join table with `comment`, `customer_id`, and `item_id`.
-  * Establish proper `back_populates` relationships between `Customer`, `Item`, and `Review`.
-  * Add an association proxy to the `Customer` model so customers can easily access their items via reviews.
-
-2. Serialization Strategy:
-  * Create Marshmallow schemas for each model (`CustomerSchema`, `ItemSchema`, `ReviewSchema`).
-  * Use `fields.Nested` to serialize relationships between models.
-  * Exclude fields that could cause circular recursion:
-    * In `CustomerSchema`, exclude items and reviews from nested outputs.
-    * In `ItemSchema`, exclude reviews and customers from nested outputs.
-    * In `ReviewSchema`, exclude item and customer from nested outputs.
-
-3. Testing:
-  * Create and seed the database with initial customers, items, and reviews.
-  * Verify relationships using Flask shell.
-  * Run unit tests to validate model relationships, association proxies, and serialization outputs.
-
-Following this structure will ensure your data models are complete, your 
-serialization is correct, and your application is robust against recursion errors.
-
-### Task 3: Develop, Test, and Refine the Code
-
-#### Step 1: Add Review and relationships with Customer and Item
-
-![customer review item erd](/assets/sqlalchemy_lab_2_erd.png)
-
-A customer can review an item that they purchased.
-
-- A review **belongs to** an customer.
-- A review **belongs to** an item.
-- A customer **has many** items **through** reviews.
-- An item **has many** customers **through** reviews.
-
-Edit `server/models.py` to add a new model class named `Review` that inherits
-from `db.Model`. Add the following attributes to the `Review` model:
-
-- a string named `__tablename__` assigned to the value `'reviews'`.
-- a column named `id` to store an integer that is the primary key.
-- a column named `comment` to store a string.
-- a column named `customer_id` that is a foreign key to the `'customers'` table.
-- a column named `item_id` that is a foreign key to the `'items'` table.
-- a relationship named `customer` that establishes a relationship with the
-  `Customer` model. Assign the `back_populates` parameter to match the property
-  name defined to the reciprocal relationship in `Customer`.
-- a relationship named `item` that establishes a relationship with the `Item`
-  model. Assign the `back_populates` parameter to match the property name
-  defined to the reciprocal relationship in `Item`.
-
-Edit the `Customer` model to add the following:
-
-- a relationship named `reviews` that establishes a relationship with the
-  `Review` model. Assign the `back_populates` parameter to match the property
-  name defined to the reciprocal relationship in `Review`.
-
-Edit the `Item` model to add the following:
-
-- a relationship named `reviews` that establishes a relationship with the
-  `Review` model. Assign the `back_populates` parameter to match the property
-  name defined to the reciprocal relationship in `Review`.
-
-Save `server/models.py`. Make sure you are in the `server` directory, then type
-the following to perform a migration to add the new model:
-
-```console
-$ flask db migrate -m 'add review'
-$ flask db upgrade head
+```python
+items = association_proxy("reviews", "item")
 ```
 
-Test the new `Review` model class and relationships:
+Without an association proxy, accessing a customer's reviewed items requires navigating through their reviews.
 
-```console
-$ pytest testing/review_test.py
+The association proxy simplifies this process:
+
+```python
+customer.items
 ```
 
-The 4 tests should pass. If not, update your `Review` model to pass the tests
-before proceeding.
+This returns the items associated with the customer's reviews.
 
-Run `server/seed.py` to add sample customers, items, and reviews to the
-database.
+## Marshmallow Serialization
 
-```
-$ python seed.py
-```
+Marshmallow schemas convert SQLAlchemy model instances into Python dictionaries.
 
-Then use either Flask shell or SQLite Viewer to confirm the 3 tables are
-populated with the seed data.
+The application defines three schemas:
 
-#### Step 2: Add Association Proxy
+- `CustomerSchema`
+- `ItemSchema`
+- `ReviewSchema`
 
-Given a customer, we might want to get a list of items they've reviewed.
-Currently, you would need to iterate through the customer's reviews to get each
-item. Try this in the Flask shell:
+### CustomerSchema
 
-```py
->>> from models import *
->>> customer1 = Customer.query.filter_by(id=1).first()
->>> customer1
-<Customer 1, Tal Yuri>
->>> items = [review.item for review in customer1.reviews]
->>> items
-[<Item 1, Laptop Backpack, 49.99>, <Item 2, Insulated Coffee Mug, 9.99>]
->>>
+Serializes customer information, including associated reviews and reviewed items.
+
+```python
+customer_dict = CustomerSchema().dump(customer)
 ```
 
-Update `Customer` to add an association proxy named `items` to get a list of
-items through the customer's `reviews` relationship.
+### ItemSchema
 
-Once you've defined the association proxy, you can easily get the items for a
-customer as:
+Serializes item information, including associated reviews.
 
-```py
->>> customer1.items
-[<Item 1, Laptop Backpack, 49.99>, <Item 2, Insulated Coffee Mug, 9.99>]
+```python
+item_dict = ItemSchema().dump(item)
 ```
 
-Test the updated `Customer` model and association proxy:
+### ReviewSchema
 
-```console
-$ pytest testing/association_proxy_test.py
+Serializes review information, including nested customer and item details.
+
+```python
+review_dict = ReviewSchema().dump(review)
 ```
 
-#### Step 3: Add Serialization
+### Preventing Recursive Serialization
 
-- Add schemas for `Customer`, `Item`, and `Reviews`.
-- Schemas should serialize all columns including id, excepting any foreign keys.
-- Use `fields.Nested` to include relationships.
-- Add serialization rules to avoid errors involving recursion depth (be careful
-  about tuple commas).
-  - Customer(s) should exclude `items` and `reviews`
-  - Item(s) should exclude `reviews` and `customers`
-  - Review(s) should exclude `item` and `customer`
+Because the models contain bidirectional relationships, nested serialization can create circular references.
 
-#### Step 4: Test and Refine Code
+For example:
 
-Test the serialized models:
-
-```console
-$ pytest testing/serialization_test.py
+```text
+Customer → Review → Customer → Review → ...
 ```
 
-Run all tests to ensure they pass:
+Marshmallow's `exclude` argument prevents this behavior by omitting selected nested fields.
 
-```console
-$ pytest
+Example:
+
+```python
+reviews = fields.Nested(
+    'ReviewSchema',
+    many=True,
+    exclude=("customer", "item")
+)
 ```
 
-#### Step 5: Commit and Push Git History
+This allows the application to serialize related records without repeatedly traversing the same relationships.
 
-Once all tests are passing, commit and push your work using `git`.
+## Installation and Setup
 
-### Task 4: Document and Maintain
+### 1. Clone the Repository
 
-Best Practice documentation steps:
-* Add comments to the code to explain purpose and logic, clarifying intent and functionality of your code to other developers.
-* Update README text to reflect the functionality of the application following https://makeareadme.com. 
-  * Add screenshot of completed work included in Markdown in README.
-* Delete any stale branches on GitHub
-* Remove unnecessary/commented out code
-* If needed, update git ignore to remove sensitive data
+```bash
+git clone <repository-url>
+cd <repository-directory>
+```
 
-## Important Submission Note
+### 2. Install Dependencies
 
-Before you submit your solution, you need to save your progress with git.
+If using Pipenv:
 
-1. Add your changes to the staging area by executing `git add .`.
-2. Create a commit by executing `git commit -m "Your commit message"`.
-3. Push your commits to GitHub by executing `git push origin main`.
+```bash
+pipenv install
+pipenv shell
+```
 
-CodeGrade will grade your lab using the same tests as are provided in the 
-`testing/` directory.
+### 3. Navigate to the Server Directory
+
+```bash
+cd server
+```
+
+### 4. Apply Database Migrations
+
+```bash
+flask db upgrade head
+```
+
+This applies the existing migrations to create the database tables.
+
+### 5. Seed the Database
+
+```bash
+python seed.py
+```
+
+The seed script populates the database with sample customers, items, and reviews.
+
+## Running Tests
+
+The project includes automated tests using pytest.
+
+Run the entire test suite from the `server` directory:
+
+```bash
+pytest -v
+```
+
+### Individual Test Files
+
+**Review model tests:**
+
+```bash
+pytest testing/review_test.py -v
+```
+
+**Association proxy tests:**
+
+```bash
+pytest testing/association_proxy_test.py -v
+```
+
+**Serialization tests:**
+
+```bash
+pytest testing/serialization_test.py -v
+```
+
+### Test Results
+
+All tests passed successfully.
+
+The test suite verifies:
+
+- Review model instantiation and attributes.
+- Saving reviews to the database.
+- Customer and item relationships.
+- Customer association proxy functionality.
+- Customer serialization.
+- Item serialization.
+- Review serialization.
+- Nested relationship exclusions.
+
+**Note:** The provided test fixture creates and drops database tables during testing. Depending on the database configuration, it may be necessary to restore and reseed the development database after running the tests.
+
+## Screenshots
+
+### Database Tables
+
+The SQLite database contains the `customers`, `items`, and `reviews` tables.
+
+![SQLite Database Tables](screenshots/database.png)
+
+### Successful Test Suite
+
+The complete pytest suite passes successfully.
+
+![Pytest Results](screenshots/test_suite.png)
+
+## Key Takeaways
+
+This lab reinforced several important concepts in relational database development:
+
+1. **SQLAlchemy Relationships:** Using `back_populates` allows related models to reference each other.
+2. **Association Proxies:** Providing direct access to related objects simplifies navigation through association models.
+3. **Marshmallow Serialization:** Schemas define how model objects are converted into dictionaries.
+4. **Nested Serialization:** Related objects can be included in serialized output without manually constructing dictionaries.
+5. **Recursion Prevention:** Excluding nested relationship fields prevents circular references.
+6. **Database Migrations:** Alembic tracks and applies database schema changes.
+7. **Automated Testing:** Pytest verifies that database relationships and serialization behave as expected.
+
+## Author
+
+Created by Matthew Swanberg as part of Course 9 Module 6 (Lab: Serialization)
